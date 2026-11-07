@@ -1,6 +1,7 @@
 package com.swordfish.lemuroid.app.mobile.feature.game
 
 import android.graphics.RectF
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -31,13 +32,18 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.layoutId
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -109,6 +115,10 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
                 HapticFeedbackMode.PRESS_RELEASE -> HapticFeedbackType.PRESS_RELEASE
             }
 
+        val fullScreenPosition = remember { mutableStateOf<Rect?>(null) }
+        val viewportPosition = remember { mutableStateOf<Rect?>(null) }
+        val moveScreenMode = remember { mutableStateOf(false) }
+
         PadKit(
             modifier = Modifier.fillMaxSize(),
             onInputEvents = { viewModel.handleVirtualInputEvent(it) },
@@ -118,9 +128,6 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
         ) {
             val localContext = LocalContext.current
             val lifecycle = LocalLifecycleOwner.current
-
-            val fullScreenPosition = remember { mutableStateOf<Rect?>(null) }
-            val viewportPosition = remember { mutableStateOf<Rect?>(null) }
 
             AndroidView(
                 modifier =
@@ -135,16 +142,14 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
             val fullPos = fullScreenPosition.value
             val viewPos = viewportPosition.value
 
-            LaunchedEffect(fullPos, viewPos) {
+            val screenOffsetX = touchControllerSettings?.screenOffsetX ?: 0f
+            val screenOffsetY = touchControllerSettings?.screenOffsetY ?: 0f
+
+            LaunchedEffect(fullPos, viewPos, screenOffsetX, screenOffsetY) {
                 val gameView = viewModel.retroGameView.retroGameViewFlow()
                 if (fullPos == null || viewPos == null) return@LaunchedEffect
                 val viewport =
-                    RectF(
-                        (viewPos.left - fullPos.left) / fullPos.width,
-                        (viewPos.top - fullPos.top) / fullPos.height,
-                        (viewPos.right - fullPos.left) / fullPos.width,
-                        (viewPos.bottom - fullPos.top) / fullPos.height,
-                    )
+                    computeGameViewport(fullPos, viewPos, screenOffsetX, screenOffsetY)
                 gameView.viewport = viewport
             }
 
@@ -200,10 +205,23 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
                             controllerConfig = currentControllerConfig,
                             touchControllerSettings = touchControllerSettings,
                             viewModel = viewModel,
+                            onMoveScreen = { moveScreenMode.value = true },
                         )
                     }
                 }
             }
+        }
+
+        val moveFullPos = fullScreenPosition.value
+        val moveViewPos = viewportPosition.value
+        if (moveScreenMode.value && touchControllerSettings != null && moveFullPos != null && moveViewPos != null) {
+            MoveGameScreenOverlay(
+                viewModel = viewModel,
+                settings = touchControllerSettings,
+                fullPos = moveFullPos,
+                viewPos = moveViewPos,
+                onDone = { moveScreenMode.value = false },
+            )
         }
 
         val isLoading =
@@ -234,12 +252,98 @@ private fun PadContainer(modifier: Modifier = Modifier) {
     )
 }
 
+private fun computeGameViewport(
+    fullPos: Rect,
+    viewPos: Rect,
+    offsetX: Float,
+    offsetY: Float,
+): RectF {
+    val left = (viewPos.left - fullPos.left) / fullPos.width
+    val top = (viewPos.top - fullPos.top) / fullPos.height
+    val right = (viewPos.right - fullPos.left) / fullPos.width
+    val bottom = (viewPos.bottom - fullPos.top) / fullPos.height
+    return RectF(left + offsetX, top + offsetY, right + offsetX, bottom + offsetY)
+}
+
+@Composable
+private fun MoveGameScreenOverlay(
+    viewModel: BaseGameScreenViewModel,
+    settings: TouchControllerSettingsManager.Settings,
+    fullPos: Rect,
+    viewPos: Rect,
+    onDone: () -> Unit,
+) {
+    val currentSettings = rememberUpdatedState(settings)
+    var offsetX by remember { mutableFloatStateOf(settings.screenOffsetX) }
+    var offsetY by remember { mutableFloatStateOf(settings.screenOffsetY) }
+
+    // Allowed range so the game screen always stays fully inside the display.
+    val baseLeft = (viewPos.left - fullPos.left) / fullPos.width
+    val baseTop = (viewPos.top - fullPos.top) / fullPos.height
+    val baseRight = (viewPos.right - fullPos.left) / fullPos.width
+    val baseBottom = (viewPos.bottom - fullPos.top) / fullPos.height
+    val minX = -baseLeft
+    val maxX = 1f - baseRight
+    val minY = -baseTop
+    val maxY = 1f - baseBottom
+
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .pointerInput(fullPos, viewPos) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        offsetX = (offsetX + dragAmount.x / fullPos.width).coerceIn(minX, maxOf(minX, maxX))
+                        offsetY = (offsetY + dragAmount.y / fullPos.height).coerceIn(minY, maxOf(minY, maxY))
+                        viewModel.updateTouchControllerSettings(
+                            currentSettings.value.copy(
+                                screenOffsetX = offsetX,
+                                screenOffsetY = offsetY,
+                            ),
+                        )
+                    }
+                },
+    ) {
+        Card(
+            modifier =
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Top))
+                    .padding(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(text = "Drag to move the game screen", modifier = Modifier.padding(start = 8.dp))
+                TextButton(
+                    onClick = {
+                        offsetX = 0f
+                        offsetY = 0f
+                        viewModel.updateTouchControllerSettings(
+                            currentSettings.value.copy(screenOffsetX = 0f, screenOffsetY = 0f),
+                        )
+                    },
+                ) {
+                    Text(text = stringResource(R.string.touch_customize_button_reset))
+                }
+                TextButton(onClick = onDone) {
+                    Text(text = stringResource(R.string.touch_customize_button_done))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun GameScreenRunningCentralMenu(
     modifier: Modifier = Modifier,
     viewModel: BaseGameScreenViewModel,
     touchControllerSettings: TouchControllerSettingsManager.Settings,
     controllerConfig: ControllerConfig,
+    onMoveScreen: () -> Unit,
 ) {
     val menuPressed = viewModel.isMenuPressed().collectAsState(false)
     Box(
@@ -251,7 +355,7 @@ private fun GameScreenRunningCentralMenu(
             animationDurationMillis = MENU_LOADING_ANIMATION_MILLIS,
             icon = R.drawable.button_menu,
         )
-        MenuEditTouchControls(viewModel, controllerConfig, touchControllerSettings)
+        MenuEditTouchControls(viewModel, controllerConfig, touchControllerSettings, onMoveScreen)
     }
 }
 
@@ -260,6 +364,7 @@ private fun MenuEditTouchControls(
     viewModel: BaseGameScreenViewModel,
     controllerConfig: ControllerConfig,
     touchControllerSettings: TouchControllerSettingsManager.Settings,
+    onMoveScreen: () -> Unit,
 ) {
     val showEditControls = viewModel.isEditControlShown().collectAsState(false)
     if (!showEditControls.value) return
@@ -325,6 +430,15 @@ private fun MenuEditTouchControls(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center,
                 ) {
+                    TextButton(
+                        onClick = {
+                            viewModel.showEditControls(false)
+                            onMoveScreen()
+                        },
+                        modifier = Modifier.padding(8.dp),
+                    ) {
+                        Text(text = "Move screen")
+                    }
                     TextButton(
                         onClick = { viewModel.resetTouchControls() },
                         modifier = Modifier.padding(8.dp),
