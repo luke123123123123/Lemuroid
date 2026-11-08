@@ -119,6 +119,19 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
         val viewportPosition = remember { mutableStateOf<Rect?>(null) }
         val moveScreenMode = remember { mutableStateOf(false) }
 
+        // True while a physical controller is connected: the touch controls are hidden then.
+        val controllerConnected = !touchControlsVisibleState.value
+
+        // With a physical controller there are no touch controls to edit, so the
+        // "Edit Controls" menu entry opens the move-screen mode directly.
+        val editControlsShown = viewModel.isEditControlShown().collectAsState(false)
+        LaunchedEffect(editControlsShown.value, controllerConnected) {
+            if (editControlsShown.value && controllerConnected) {
+                viewModel.showEditControls(false)
+                moveScreenMode.value = true
+            }
+        }
+
         PadKit(
             modifier = Modifier.fillMaxSize(),
             onInputEvents = { viewModel.handleVirtualInputEvent(it) },
@@ -142,8 +155,18 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
             val fullPos = fullScreenPosition.value
             val viewPos = viewportPosition.value
 
-            val screenOffsetX = touchControllerSettings?.screenOffsetX ?: 0f
-            val screenOffsetY = touchControllerSettings?.screenOffsetY ?: 0f
+            val screenOffsetX =
+                if (controllerConnected) {
+                    touchControllerSettings?.controllerScreenOffsetX ?: 0f
+                } else {
+                    touchControllerSettings?.screenOffsetX ?: 0f
+                }
+            val screenOffsetY =
+                if (controllerConnected) {
+                    touchControllerSettings?.controllerScreenOffsetY ?: 0f
+                } else {
+                    touchControllerSettings?.screenOffsetY ?: 0f
+                }
 
             LaunchedEffect(fullPos, viewPos, screenOffsetX, screenOffsetY) {
                 val gameView = viewModel.retroGameView.retroGameViewFlow()
@@ -218,6 +241,7 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
             MoveGameScreenOverlay(
                 viewModel = viewModel,
                 settings = touchControllerSettings,
+                controllerConnected = controllerConnected,
                 fullPos = moveFullPos,
                 viewPos = moveViewPos,
                 onDone = { moveScreenMode.value = false },
@@ -269,39 +293,57 @@ private fun computeGameViewport(
 private fun MoveGameScreenOverlay(
     viewModel: BaseGameScreenViewModel,
     settings: TouchControllerSettingsManager.Settings,
+    controllerConnected: Boolean,
     fullPos: Rect,
     viewPos: Rect,
     onDone: () -> Unit,
 ) {
     val currentSettings = rememberUpdatedState(settings)
-    var offsetX by remember { mutableFloatStateOf(settings.screenOffsetX) }
-    var offsetY by remember { mutableFloatStateOf(settings.screenOffsetY) }
+    var offsetX by remember {
+        mutableFloatStateOf(
+            if (controllerConnected) settings.controllerScreenOffsetX else settings.screenOffsetX,
+        )
+    }
+    var offsetY by remember {
+        mutableFloatStateOf(
+            if (controllerConnected) settings.controllerScreenOffsetY else settings.screenOffsetY,
+        )
+    }
 
-    // Allowed range so the game screen always stays fully inside the display.
-    val baseLeft = (viewPos.left - fullPos.left) / fullPos.width
-    val baseTop = (viewPos.top - fullPos.top) / fullPos.height
-    val baseRight = (viewPos.right - fullPos.left) / fullPos.width
-    val baseBottom = (viewPos.bottom - fullPos.top) / fullPos.height
-    val minX = -baseLeft
-    val maxX = 1f - baseRight
-    val minY = -baseTop
-    val maxY = 1f - baseBottom
+    fun store(
+        x: Float,
+        y: Float,
+    ) {
+        val base = currentSettings.value
+        viewModel.updateTouchControllerSettings(
+            if (controllerConnected) {
+                base.copy(controllerScreenOffsetX = x, controllerScreenOffsetY = y)
+            } else {
+                base.copy(screenOffsetX = x, screenOffsetY = y)
+            },
+        )
+    }
+
+    // The game is fitted inside the viewport, which can be as large as the whole display
+    // (landscape). So instead of keeping the viewport fully on screen, we only keep its
+    // center on screen. That always leaves room to move, and Reset brings it back.
+    val centerX = ((viewPos.center.x - fullPos.left) / fullPos.width)
+    val centerY = ((viewPos.center.y - fullPos.top) / fullPos.height)
+    val minX = -centerX
+    val maxX = 1f - centerX
+    val minY = -centerY
+    val maxY = 1f - centerY
 
     Box(
         modifier =
             Modifier
                 .fillMaxSize()
-                .pointerInput(fullPos, viewPos) {
+                .pointerInput(fullPos, viewPos, controllerConnected) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
-                        offsetX = (offsetX + dragAmount.x / fullPos.width).coerceIn(minX, maxOf(minX, maxX))
-                        offsetY = (offsetY + dragAmount.y / fullPos.height).coerceIn(minY, maxOf(minY, maxY))
-                        viewModel.updateTouchControllerSettings(
-                            currentSettings.value.copy(
-                                screenOffsetX = offsetX,
-                                screenOffsetY = offsetY,
-                            ),
-                        )
+                        offsetX = (offsetX + dragAmount.x / fullPos.width).coerceIn(minX, maxX)
+                        offsetY = (offsetY + dragAmount.y / fullPos.height).coerceIn(minY, maxY)
+                        store(offsetX, offsetY)
                     }
                 },
     ) {
@@ -322,9 +364,7 @@ private fun MoveGameScreenOverlay(
                     onClick = {
                         offsetX = 0f
                         offsetY = 0f
-                        viewModel.updateTouchControllerSettings(
-                            currentSettings.value.copy(screenOffsetX = 0f, screenOffsetY = 0f),
-                        )
+                        store(0f, 0f)
                     },
                 ) {
                     Text(text = stringResource(R.string.touch_customize_button_reset))
