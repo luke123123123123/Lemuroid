@@ -45,9 +45,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType as ComposeHapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -63,6 +66,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.constraintlayout.compose.ConstraintLayout
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.AppBackground
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.AppBackgroundLayer
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.BackgroundConfig
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.BackgroundScope
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.bgText
 import com.swordfish.lemuroid.app.shared.game.BaseGameScreenViewModel
 import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelTouchControls.Companion.MENU_LOADING_ANIMATION_MILLIS
 import com.swordfish.lemuroid.app.shared.settings.HapticFeedbackMode
@@ -128,6 +136,11 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
         val viewportPosition = remember { mutableStateOf<Rect?>(null) }
         val moveScreenMode = remember { mutableStateOf(false) }
 
+        val gameBackground =
+            AppBackground.observe(LocalContext.current, BackgroundScope.GAME)
+                .collectAsState()
+                .value
+
         // True while a physical controller is connected: the touch controls are hidden then.
         val controllerConnected = !touchControlsVisibleState.value
 
@@ -183,6 +196,14 @@ fun MobileGameScreen(viewModel: BaseGameScreenViewModel) {
                 val viewport =
                     computeGameViewport(fullPos, viewPos, screenOffsetX, screenOffsetY)
                 gameView.viewport = viewport
+            }
+
+            // Custom background everywhere around the game screen (the game itself stays visible).
+            if (gameBackground.isActive && fullPos != null && viewPos != null) {
+                GameBackgroundOverlay(
+                    config = gameBackground,
+                    viewport = computeGameViewport(fullPos, viewPos, screenOffsetX, screenOffsetY),
+                )
             }
 
             ConstraintLayout(
@@ -308,6 +329,32 @@ private fun snapToTarget(
 }
 
 @Composable
+private fun GameBackgroundOverlay(
+    config: BackgroundConfig,
+    viewport: RectF,
+) {
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .drawWithContent {
+                    // Paint everything except the rectangle where the game is drawn.
+                    clipRect(
+                        left = viewport.left * size.width,
+                        top = viewport.top * size.height,
+                        right = viewport.right * size.width,
+                        bottom = viewport.bottom * size.height,
+                        clipOp = ClipOp.Difference,
+                    ) {
+                        this@drawWithContent.drawContent()
+                    }
+                },
+    ) {
+        AppBackgroundLayer(config, Modifier.fillMaxSize())
+    }
+}
+
+@Composable
 private fun MoveGameScreenOverlay(
     viewModel: BaseGameScreenViewModel,
     settings: TouchControllerSettingsManager.Settings,
@@ -422,8 +469,8 @@ private fun MoveGameScreenOverlay(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(text = "Drag to move the game screen")
-                Text(text = "It snaps to the middle (green lines)")
+                Text(text = bgText("Sleep om het gamescherm te verplaatsen", "Drag to move the game screen"))
+                Text(text = bgText("Klikt vast in het midden (groene lijnen)", "It snaps to the middle (green lines)"))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(
                         onClick = {
@@ -547,7 +594,7 @@ private fun MenuEditTouchControls(
                         },
                         modifier = Modifier.padding(8.dp),
                     ) {
-                        Text(text = "Move screen")
+                        Text(text = bgText("Scherm verplaatsen", "Move screen"))
                     }
                     TextButton(
                         onClick = { viewModel.resetTouchControls() },

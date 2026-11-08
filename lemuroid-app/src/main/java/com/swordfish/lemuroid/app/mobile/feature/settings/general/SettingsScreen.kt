@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -13,6 +14,9 @@ import androidx.navigation.NavController
 import com.swordfish.lemuroid.R
 import com.swordfish.lemuroid.app.mobile.feature.main.MainRoute
 import com.swordfish.lemuroid.app.mobile.feature.main.navigateToRoute
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.BackgroundScope
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.BackgroundSettingsDialog
+import com.swordfish.lemuroid.app.mobile.shared.compose.ui.bgText
 import com.swordfish.lemuroid.app.shared.library.LibraryIndexScheduler
 import com.swordfish.lemuroid.app.utils.android.settings.LemuroidCardSettingsGroup
 import com.swordfish.lemuroid.app.utils.android.settings.LemuroidSettingsList
@@ -54,6 +58,7 @@ fun SettingsScreen(
             scanInProgress = scanInProgress,
         )
         GeneralSettings()
+        BackgroundSettings()
         InputSettings(navController = navController)
         MiscSettings(
             indexingInProgress = indexingInProgress,
@@ -129,6 +134,58 @@ private fun InputSettings(navController: NavController) {
                 Text(text = stringResource(id = R.string.settings_description_gamepad_settings))
             },
             onClick = { navController.navigateToRoute(MainRoute.SETTINGS_INPUT_DEVICES) },
+        )
+    }
+}
+
+@Composable
+private fun BackgroundSettings() {
+    val showMenuDialog = remember { mutableStateOf(false) }
+    val showGameDialog = remember { mutableStateOf(false) }
+
+    LemuroidCardSettingsGroup(
+        title = { Text(text = bgText("Achtergrond", "Background")) },
+    ) {
+        LemuroidSettingsMenuLink(
+            title = { Text(text = bgText("Achtergrond van de menu's", "Menu background")) },
+            subtitle = {
+                Text(
+                    text =
+                        bgText(
+                            "Startscherm, consoles, favorieten en zoeken",
+                            "Home, systems, favorites and search",
+                        ),
+                )
+            },
+            onClick = { showMenuDialog.value = true },
+        )
+        LemuroidSettingsMenuLink(
+            title = { Text(text = bgText("Achtergrond tijdens een game", "Background during a game")) },
+            subtitle = {
+                Text(
+                    text =
+                        bgText(
+                            "Zichtbaar rond het spel en achter de knoppen",
+                            "Visible around the game and behind the buttons",
+                        ),
+                )
+            },
+            onClick = { showGameDialog.value = true },
+        )
+    }
+
+    if (showMenuDialog.value) {
+        BackgroundSettingsDialog(
+            scope = BackgroundScope.MENU,
+            title = bgText("Achtergrond van de menu's", "Menu background"),
+            onDismiss = { showMenuDialog.value = false },
+        )
+    }
+    if (showGameDialog.value) {
+        BackgroundSettingsDialog(
+            scope = BackgroundScope.GAME,
+            title = bgText("Achtergrond tijdens een game", "Background during a game"),
+            onDismiss = { showGameDialog.value = false },
         )
     }
 }
