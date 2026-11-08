@@ -32,6 +32,9 @@ class TouchControllerSettingsManager(private val sharedPreferences: SharedPrefer
         // Offset of the game screen, as a fraction of the full screen size (-1..1).
         val screenOffsetX: Float = DEFAULT_SCREEN_OFFSET,
         val screenOffsetY: Float = DEFAULT_SCREEN_OFFSET,
+        // Same, but used while a physical controller is connected (the layout is different then).
+        val controllerScreenOffsetX: Float = DEFAULT_SCREEN_OFFSET,
+        val controllerScreenOffsetY: Float = DEFAULT_SCREEN_OFFSET,
     )
 
     private fun computeInsetsPaddings(
